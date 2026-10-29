@@ -1,0 +1,67 @@
+name: Deploy server
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'src/main/java/com/whiteant/pet/server/**'
+      - 'src/main/resources/**'
+      - 'build.gradle'
+  workflow_dispatch:
+
+concurrency:
+  group: deploy-server
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+          cache: gradle
+
+      - name: Build server jar
+        run: |
+          chmod +x gradlew
+          ./gradlew bootJar --no-daemon
+
+      - name: Upload jar
+        uses: appleboy/scp-action@v0.1.7
+        with:
+          host: ${{ secrets.LIGHTSAIL_HOST }}
+          username: ${{ secrets.LIGHTSAIL_USER }}
+          key: ${{ secrets.LIGHTSAIL_SSH_KEY }}
+          source: build/libs/desktop-pet-server.jar
+          target: /home/ubuntu/desktop-pet/upload
+          strip_components: 2
+
+      - name: Swap jar and restart
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.LIGHTSAIL_HOST }}
+          username: ${{ secrets.LIGHTSAIL_USER }}
+          key: ${{ secrets.LIGHTSAIL_SSH_KEY }}
+          script: |
+            set -e
+            cd /home/ubuntu/desktop-pet
+            # 실행 중인 jar를 덮어쓰지 않고 mv로 교체
+            mv upload/desktop-pet-server.jar desktop-pet-server.jar
+            sudo systemctl restart desktop-pet
+
+            for i in $(seq 1 30); do
+              code=$(curl -s -o /dev/null -w "%{http_code}" http://127.0.0.1:8081/api/client/latest || true)
+              if [ "$code" != "000" ]; then
+                echo "server up ($code)"
+                exit 0
+              fi
+              sleep 2
+            done
+
+            echo "server did not start"
+            sudo journalctl -u desktop-pet -n 50 --no-pager
+            exit 1

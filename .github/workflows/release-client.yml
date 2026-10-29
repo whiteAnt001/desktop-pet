@@ -1,0 +1,67 @@
+name: Release client
+
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+          cache: gradle
+
+      - name: Build client
+        shell: pwsh
+        run: |
+          $version = "${{ github.ref_name }}".TrimStart('v')
+          ./gradlew.bat publishClient "-PclientVersion=$version" --no-daemon
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: client-publish
+          path: build/client-publish/
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: client-publish
+          path: client-publish
+
+      - name: Upload jar and zip
+        uses: appleboy/scp-action@v0.1.7
+        with:
+          host: ${{ secrets.LIGHTSAIL_HOST }}
+          username: ${{ secrets.LIGHTSAIL_USER }}
+          key: ${{ secrets.LIGHTSAIL_SSH_KEY }}
+          source: client-publish/desktop-pet-client.jar,client-publish/DesktopPet.zip
+          target: /home/ubuntu/desktop-pet/client
+          strip_components: 1
+
+      # 파일 먼저 올리고 버전 정보는 마지막에 (반쯤 올라간 상태로 업데이트 뜨는 거 방지)
+      - name: Upload latest.json
+        uses: appleboy/scp-action@v0.1.7
+        with:
+          host: ${{ secrets.LIGHTSAIL_HOST }}
+          username: ${{ secrets.LIGHTSAIL_USER }}
+          key: ${{ secrets.LIGHTSAIL_SSH_KEY }}
+          source: client-publish/latest.json
+          target: /home/ubuntu/desktop-pet/client
+          strip_components: 1
+
+      - name: GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: client-publish/DesktopPet.zip
+          generate_release_notes: true
