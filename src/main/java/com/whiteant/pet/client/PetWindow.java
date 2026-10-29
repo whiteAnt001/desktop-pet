@@ -4,6 +4,8 @@ import javax.swing.*;
 import java.awt.*;
 import java.awt.event.MouseAdapter;
 import java.awt.event.MouseEvent;
+import java.awt.event.WindowAdapter;
+import java.awt.event.WindowEvent;
 import java.util.ArrayList;
 import java.util.List;
 
@@ -53,6 +55,7 @@ public class PetWindow extends JWindow {
 
     private Color color;
     private Runnable onDoubleClick;
+    private List<Item> items = List.of();
 
     private double x;
     private double y;
@@ -63,7 +66,6 @@ public class PetWindow extends JWindow {
     private boolean moved;
     private boolean hovering;
     private boolean sleeping;
-    private Item item;
     private Double targetX;
     private Point dragOffset;
     private long lastMoveSentAt;
@@ -101,7 +103,7 @@ public class PetWindow extends JWindow {
             public void mousePressed(MouseEvent e) {
                 if (SwingUtilities.isRightMouseButton(e)) {
                     if (menuOpener != null) {
-                        menuOpener.open(panel, e.getX(), e.getY());
+                        openMenuAtCursor(menuOpener, e);
                     }
                     return;
                 }
@@ -156,6 +158,43 @@ public class PetWindow extends JWindow {
         timer = new Timer(TICK_MS, e -> tick());
     }
 
+    /**
+     * 개미 창은 포커스를 못 받아서 메뉴가 "바깥 클릭하면 닫힘"이 안 됨.
+     * 커서 위치에 포커스 받는 1x1 투명 창을 띄우고 거기에 메뉴를 붙여서,
+     * 다른 데 클릭하면 그 창이 포커스를 잃으면서 메뉴도 닫히게 함.
+     */
+    private void openMenuAtCursor(MenuOpener opener, MouseEvent e) {
+        JDialog host = new JDialog((Frame) null);
+        host.setUndecorated(true);
+        host.setType(Window.Type.UTILITY);
+        host.setAlwaysOnTop(true);
+        host.setBackground(new Color(0, 0, 0, 0));
+        host.setBounds(e.getXOnScreen(), e.getYOnScreen(), 1, 1);
+        host.setVisible(true);
+        host.toFront();
+        host.requestFocus();
+
+        host.addWindowFocusListener(new WindowAdapter() {
+            @Override
+            public void windowLostFocus(WindowEvent ev) {
+                MenuSelectionManager.defaultManager().clearSelectedPath();
+                host.dispose();
+            }
+        });
+
+        opener.open(host.getContentPane(), 0, 0);
+
+        // 메뉴 항목 클릭이나 Esc로 닫혔을 때도 호스트 창 정리
+        Timer watcher = new Timer(200, null);
+        watcher.addActionListener(ev -> {
+            if (MenuSelectionManager.defaultManager().getSelectedPath().length == 0) {
+                watcher.stop();
+                host.dispose();
+            }
+        });
+        watcher.start();
+    }
+
     public String getPetName() {
         return name;
     }
@@ -187,8 +226,8 @@ public class PetWindow extends JWindow {
         repaint();
     }
 
-    public void setItem(Item item) {
-        this.item = item;
+    public void setItems(List<Item> items) {
+        this.items = List.copyOf(items);
         repaint();
     }
 
@@ -273,6 +312,7 @@ public class PetWindow extends JWindow {
         }
 
         if (dragging) {
+            frame++; // 드래그 중에도 망토/오라는 움직이게
             repaint();
             return;
         }
@@ -285,9 +325,9 @@ public class PetWindow extends JWindow {
             vy = 0;
             y = groundY();
 
-            if (sleeping) {
+            if (sleeping || hovering) {
                 frame++;
-            } else if (!hovering) {
+            } else {
                 frame++;
                 if (targetX != null) {
                     double dx = targetX - x;
@@ -407,6 +447,14 @@ public class PetWindow extends JWindow {
         int bob = walking ? (int) (Math.sin(frame * 0.4) * 2) : 0;
         int legSwing = walking ? (int) (Math.sin(frame * 0.4) * 4) : 0;
 
+        int headX = dir > 0 ? 40 : 18;
+        int headY = 26 + bob;
+        Item.Pose pose = new Item.Pose(headX, headY, bob, dir, frame);
+
+        // 몸 뒤: 오라 → 등
+        drawItems(g, pose, Item.Slot.AURA);
+        drawItems(g, pose, Item.Slot.BACK);
+
         g.setColor(color);
         g.setStroke(new BasicStroke(2));
 
@@ -415,9 +463,6 @@ public class PetWindow extends JWindow {
         g.drawLine(50, 62, 56 + legSwing, 76);
 
         g.fillOval(26, 44 + bob, 28, 24);
-
-        int headX = dir > 0 ? 40 : 18;
-        int headY = 26 + bob;
         g.fillOval(headX, headY, 24, 22);
 
         g.drawLine(headX + 8, headY + 2, headX + 2, headY - 10);
@@ -435,15 +480,24 @@ public class PetWindow extends JWindow {
             g.drawArc(headX + 6, headY + 14, 10, 6, 0, 180);
         }
 
-        if (item != null) {
-            item.draw(g, headX, headY, dir);
-        }
+        // 몸 앞: 목 → 머리 → 얼굴
+        drawItems(g, pose, Item.Slot.NECK);
+        drawItems(g, pose, Item.Slot.HEAD);
+        drawItems(g, pose, Item.Slot.FACE);
 
         if (sleeping) {
             g.setFont(ZZZ_FONT);
             g.setColor(new Color(0x8c959f));
             int zy = headY - 6 - (frame / 10) % 6;
             g.drawString("Zzz", dir > 0 ? headX + 22 : headX - 18, zy);
+        }
+    }
+
+    private void drawItems(Graphics2D g, Item.Pose pose, Item.Slot slot) {
+        for (Item item : items) {
+            if (item.getSlot() == slot) {
+                item.draw(g, pose);
+            }
         }
     }
 

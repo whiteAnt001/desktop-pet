@@ -15,6 +15,7 @@ import java.time.format.DateTimeFormatter;
 import java.util.ArrayDeque;
 import java.util.Deque;
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
 
 public class PetClientApp {
@@ -141,8 +142,6 @@ public class PetClientApp {
         }
         roomCode = settings.getRoomCode();
 
-        String item = inventory.getEquipped() == null ? "" : inventory.getEquipped().name();
-
         net = new NetClient(this::onMessage, this::fail);
         net.connect(base.replaceFirst("^http", "ws") + "/ws")
                 .thenRun(() -> net.send(Map.of(
@@ -150,7 +149,7 @@ public class PetClientApp {
                         "code", roomCode,
                         "name", settings.getName(),
                         "color", settings.getColor(),
-                        "item", item)))
+                        "item", inventory.equippedCodes())))
                 .exceptionally(e -> {
                     SwingUtilities.invokeLater(() -> fail("서버 접속 실패: " + e.getMessage()));
                     return null;
@@ -242,7 +241,7 @@ public class PetClientApp {
             }
             case "EQUIP" -> {
                 if (target != null) {
-                    target.setItem(Item.fromCode(msg.path("item").asText("")));
+                    target.setItems(Item.fromCodes(msg.path("item").asText("")));
                 }
             }
             case "COLOR" -> {
@@ -273,7 +272,7 @@ public class PetClientApp {
                 me,
                 me ? this::openMenu : null,
                 (nx, ny, released) -> sendMove(id, nx, ny, released));
-        pet.setItem(Item.fromCode(member.path("item").asText("")));
+        pet.setItems(Item.fromCodes(member.path("item").asText("")));
         pet.setSleeping(member.path("away").asBoolean(false));
         if (me) {
             pet.setOnDoubleClick(this::openChatInput);
@@ -444,37 +443,62 @@ public class PetClientApp {
     // ===== 아이템 =====
 
     private JMenu buildItemMenu() {
-        JMenu menu = new JMenu("아이템");
+        int ownedCount = inventory.getOwned().size();
+        JMenu menu = new JMenu("아이템 (" + ownedCount + "/" + Item.values().length + ")");
 
-        if (inventory.getOwned().isEmpty()) {
+        if (ownedCount == 0) {
             JMenuItem empty = new JMenuItem("아직 없음 (선물상자를 노려봐)");
             empty.setEnabled(false);
             menu.add(empty);
             return menu;
         }
 
-        ButtonGroup group = new ButtonGroup();
-        for (Item item : inventory.getOwned()) {
-            JRadioButtonMenuItem entry = new JRadioButtonMenuItem(item.displayName(), item == inventory.getEquipped());
-            entry.addActionListener(e -> equip(item));
-            group.add(entry);
-            menu.add(entry);
-        }
-        menu.addSeparator();
+        for (Item.Slot slot : Item.Slot.values()) {
+            List<Item> inSlot = inventory.getOwned().stream()
+                    .filter(i -> i.getSlot() == slot)
+                    .toList();
+            if (inSlot.isEmpty()) {
+                continue;
+            }
 
-        JMenuItem unequip = new JMenuItem("해제");
-        unequip.addActionListener(e -> equip(null));
-        menu.add(unequip);
+            Item current = inventory.getEquipped(slot);
+            JMenu sub = new JMenu(slot.getLabel() + (current == null ? "" : " · " + current.getLabel()));
+
+            ButtonGroup group = new ButtonGroup();
+            for (Item item : inSlot) {
+                JRadioButtonMenuItem entry = new JRadioButtonMenuItem(item.displayName(), item == current);
+                entry.addActionListener(e -> equip(item));
+                group.add(entry);
+                sub.add(entry);
+            }
+            sub.addSeparator();
+
+            JMenuItem off = new JMenuItem("해제");
+            off.setEnabled(current != null);
+            off.addActionListener(e -> unequip(slot));
+            sub.add(off);
+
+            menu.add(sub);
+        }
         return menu;
     }
 
     private void equip(Item item) {
-        inventory.setEquipped(item);
+        inventory.equip(item);
+        applyEquipped();
+    }
+
+    private void unequip(Item.Slot slot) {
+        inventory.unequip(slot);
+        applyEquipped();
+    }
+
+    private void applyEquipped() {
         PetWindow mine = pets.get(selfId);
         if (mine != null) {
-            mine.setItem(item);
+            mine.setItems(inventory.getEquipped());
         }
-        net.send(Map.of("type", "EQUIP", "item", item == null ? "" : item.name()));
+        net.send(Map.of("type", "EQUIP", "item", inventory.equippedCodes()));
     }
 
     // ===== 메뉴 =====
