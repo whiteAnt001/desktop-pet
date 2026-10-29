@@ -1,0 +1,147 @@
+plugins {
+    id 'java'
+    id 'org.springframework.boot' version '3.5.6'
+    id 'io.spring.dependency-management' version '1.1.7'
+}
+
+group = 'com.whiteant'
+version = '0.0.1'
+
+java {
+    toolchain {
+        languageVersion = JavaLanguageVersion.of(21)
+    }
+}
+
+repositories {
+    mavenCentral()
+}
+
+dependencies {
+    implementation 'org.springframework.boot:spring-boot-starter-web'
+    implementation 'org.springframework.boot:spring-boot-starter-websocket'
+
+    compileOnly 'org.projectlombok:lombok'
+    annotationProcessor 'org.projectlombok:lombok'
+}
+
+// main이 여러 개라 서버 main을 지정
+springBoot {
+    mainClass = 'com.whiteant.pet.server.PetServerApplication'
+}
+
+bootJar {
+    archiveFileName = 'desktop-pet-server.jar'
+}
+
+tasks.withType(JavaCompile).configureEach {
+    options.encoding = 'UTF-8'
+}
+
+// ===== 클라이언트 버전 =====
+
+// 태그 배포 땐 GitHub Actions가 -PclientVersion=0.4.2 로 넘겨줌. 로컬 빌드는 기본값
+def clientVersion = (project.findProperty('clientVersion') ?: '0.4.1').toString()
+// 런타임 모듈(--add-modules)이나 jackson 버전 바뀌면 +1 → 자동업데이트 때 zip 통째로 받음
+def clientBundleVersion = 1
+// 이 버전보다 낮으면 "나중에" 없이 강제 업데이트
+def clientMinVersion = '0.4.0'
+
+// ===== 클라이언트 패키징 =====
+
+def clientPackagePath = 'com/whiteant/pet/client'
+def clientMain = 'com.whiteant.pet.client.PetClientApp'
+def clientInput = layout.buildDirectory.dir('client-input')
+def clientDist = layout.buildDirectory.dir('client-dist')
+def clientPublish = layout.buildDirectory.dir('client-publish')
+
+tasks.register('clientJar', Jar) {
+    dependsOn 'classes'
+    archiveFileName = 'desktop-pet-client.jar'
+    destinationDirectory = clientInput
+    from(sourceSets.main.output) {
+        include "${clientPackagePath}/**"
+    }
+    manifest {
+        attributes(
+                'Main-Class': clientMain,
+                'Implementation-Version': clientVersion,
+                'Specification-Version': clientBundleVersion
+        )
+    }
+}
+
+tasks.register('clientLibs', Copy) {
+    from(configurations.runtimeClasspath) {
+        include 'jackson-*.jar'
+    }
+    into clientInput
+}
+
+tasks.register('packageClient', Exec) {
+    dependsOn 'clientJar', 'clientLibs'
+
+    def jdkHome = javaToolchains.launcherFor {
+        languageVersion = JavaLanguageVersion.of(21)
+    }.get().metadata.installationPath.asFile
+    def jpackage = new File(jdkHome, 'bin/jpackage.exe')
+
+    doFirst {
+        delete clientDist
+    }
+
+    commandLine jpackage.absolutePath,
+            '--type', 'app-image',
+            '--name', 'DesktopPet',
+            '--app-version', clientVersion,
+            '--input', clientInput.get().asFile.absolutePath,
+            '--main-jar', 'desktop-pet-client.jar',
+            '--main-class', clientMain,
+            '--dest', clientDist.get().asFile.absolutePath,
+            '--add-modules', 'java.desktop,java.net.http,java.sql,java.logging,java.prefs,jdk.crypto.ec,jdk.unsupported',
+            '--java-options', '-Dfile.encoding=UTF-8'
+
+    // -Pconsole 주면 콘솔 붙은 디버그 빌드
+    if (project.hasProperty('console')) {
+        args '--win-console'
+    }
+}
+
+tasks.register('zipClient', Zip) {
+    dependsOn 'packageClient'
+    from(clientDist)
+    archiveFileName = 'DesktopPet.zip'
+    destinationDirectory = clientPublish
+}
+
+// 서버에 올릴 파일 3개 만들기: latest.json, desktop-pet-client.jar, DesktopPet.zip
+tasks.register('publishClient') {
+    dependsOn 'zipClient'
+
+    doLast {
+        def outDir = clientPublish.get().asFile
+        def builtJar = new File(clientInput.get().asFile, 'desktop-pet-client.jar')
+        def publishedJar = new File(outDir, 'desktop-pet-client.jar')
+        def zipFile = new File(outDir, 'DesktopPet.zip')
+
+        publishedJar.bytes = builtJar.bytes
+
+        def sha256 = { File f ->
+            java.security.MessageDigest.getInstance('SHA-256').digest(f.bytes).encodeHex().toString()
+        }
+
+        def latest = [
+                version      : clientVersion,
+                minVersion   : clientMinVersion,
+                bundleVersion: clientBundleVersion,
+                jar          : 'desktop-pet-client.jar',
+                jarSha256    : sha256(publishedJar),
+                zip          : 'DesktopPet.zip',
+                zipSha256    : sha256(zipFile)
+        ]
+        new File(outDir, 'latest.json').text =
+                groovy.json.JsonOutput.prettyPrint(groovy.json.JsonOutput.toJson(latest))
+
+        println "클라이언트 ${clientVersion} 배포 파일 → ${outDir}"
+    }
+}
