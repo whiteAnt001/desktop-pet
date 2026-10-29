@@ -6,6 +6,7 @@ import org.springframework.web.socket.WebSocketSession;
 
 import java.util.ArrayList;
 import java.util.Collection;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
@@ -20,9 +21,8 @@ public class Room {
     private final Map<String, Member> members = new ConcurrentHashMap<>();
     private final Map<String, WebSocketSession> sessions = new ConcurrentHashMap<>();
 
-    // 선물상자 상태 (synchronized 메서드로만 접근)
-    private String giftId;
-    private long giftExpiresAt;
+    // 떠 있는 선물상자들: giftId → 만료 시각 (synchronized 메서드로만 접근)
+    private final Map<String, Long> gifts = new HashMap<>();
     private long nextGiftAt;
 
     public void add(WebSocketSession session, Member member) {
@@ -61,33 +61,37 @@ public class Room {
         }
     }
 
-    /** 투하 시간이 됐으면 새 선물 id 반환, 아니면 null */
+    /** 자동 투하: 떠 있는 상자 없고 시간 됐으면 새 선물 id, 아니면 null */
     public synchronized String dropGiftIfDue(long now, long lifetimeMs) {
-        if (giftId != null || isEmpty() || nextGiftAt == 0 || now < nextGiftAt) {
+        if (!gifts.isEmpty() || isEmpty() || nextGiftAt == 0 || now < nextGiftAt) {
             return null;
         }
-        giftId = UUID.randomUUID().toString().substring(0, 8);
-        giftExpiresAt = now + lifetimeMs;
         nextGiftAt = 0;
-        return giftId;
+        return addGift(now, lifetimeMs);
+    }
+
+    /** 조건 없이 상자 하나 추가 (관리자 투하용) */
+    public synchronized String addGift(long now, long lifetimeMs) {
+        String id = UUID.randomUUID().toString().substring(0, 8);
+        gifts.put(id, now + lifetimeMs);
+        return id;
     }
 
     /** 선착순 판정. 처음 요청한 사람만 true */
     public synchronized boolean claimGift(String id) {
-        if (giftId == null || !giftId.equals(id)) {
-            return false;
-        }
-        giftId = null;
-        return true;
+        return gifts.remove(id) != null;
     }
 
-    /** 만료됐으면 만료된 선물 id 반환, 아니면 null */
-    public synchronized String expireGiftIfDue(long now) {
-        if (giftId != null && now >= giftExpiresAt) {
-            String expired = giftId;
-            giftId = null;
-            return expired;
-        }
-        return null;
+    /** 만료된 상자 id들 */
+    public synchronized List<String> expireGifts(long now) {
+        List<String> expired = new ArrayList<>();
+        gifts.entrySet().removeIf(e -> {
+            if (now >= e.getValue()) {
+                expired.add(e.getKey());
+                return true;
+            }
+            return false;
+        });
+        return expired;
     }
 }

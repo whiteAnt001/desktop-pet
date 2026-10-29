@@ -28,15 +28,19 @@ public class RoomRegistry {
         }
     }
 
+    // 코드 형식만 맞으면 없던 방도 그 코드로 만들어줌 (방 유지용)
     public Optional<Room> findOrCreate(String code) {
-        if (code == null) {
-            return Optional.empty();
-        }
-        String normalized = code.trim().toUpperCase();
-        if (!CODE.matcher(normalized).matches()) {
+        String normalized = normalize(code);
+        if (normalized == null) {
             return Optional.empty();
         }
         return Optional.of(rooms.computeIfAbsent(normalized, Room::new));
+    }
+
+    // 있는 방만 찾기 (관리자용)
+    public Optional<Room> find(String code) {
+        String normalized = normalize(code);
+        return normalized == null ? Optional.empty() : Optional.ofNullable(rooms.get(normalized));
     }
 
     public Collection<Room> all() {
@@ -47,6 +51,14 @@ public class RoomRegistry {
         if (room.isEmpty()) {
             rooms.remove(room.getCode(), room);
         }
+    }
+
+    private String normalize(String code) {
+        if (code == null) {
+            return null;
+        }
+        String normalized = code.trim().toUpperCase();
+        return CODE.matcher(normalized).matches() ? normalized : null;
     }
 
     private String randomCode() {
