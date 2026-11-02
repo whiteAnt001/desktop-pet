@@ -6,6 +6,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import javax.swing.*;
 import java.awt.*;
 import java.awt.datatransfer.StringSelection;
+import java.awt.image.BufferedImage;
 import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
@@ -45,6 +46,7 @@ public class PetClientApp {
     private String selfId;
     private boolean createdRoom;
     private ChatInputDialog chatInput;
+    private TrayIcon trayIcon;
 
     private Timer idleTimer;
     private Point lastMouse;
@@ -56,6 +58,11 @@ public class PetClientApp {
     }
 
     private void start() {
+        if (!SingleInstance.acquire(this::quit) && !handleAlreadyRunning()) {
+            System.exit(0);
+            return;
+        }
+
         settings = Settings.load();
 
         if (Updater.checkAndUpdate(settings.getServer())) {
@@ -63,9 +70,34 @@ public class PetClientApp {
         }
 
         if (!settings.canAutoJoin() && !showSetup()) {
-            System.exit(0);
+            quit();
         }
         connect();
+    }
+
+    /** 이미 켜져 있을 때. 다시 시작이면 true (기존 거 끄고 이어서 실행) */
+    private boolean handleAlreadyRunning() {
+        Object[] options = {"다시 시작", "끄기", "취소"};
+        int choice = JOptionPane.showOptionDialog(null,
+                "데스크톱 펫이 이미 실행 중이야.\n개미가 안 보이거나 안 눌리면 다시 시작해봐.",
+                "데스크톱 펫", JOptionPane.DEFAULT_OPTION, JOptionPane.QUESTION_MESSAGE,
+                null, options, options[0]);
+        if (choice != 0 && choice != 1) {
+            return false;
+        }
+
+        SingleInstance.requestQuit();
+        boolean acquired = SingleInstance.acquireWithRetry(this::quit, 5000);
+
+        if (choice == 1) {
+            if (!acquired) {
+                JOptionPane.showMessageDialog(null,
+                        "기존 프로그램을 못 껐어.\nWin+R → taskkill /IM DesktopPet.exe /F",
+                        "데스크톱 펫", JOptionPane.WARNING_MESSAGE);
+            }
+            return false; // 끄기만 하고 이것도 종료
+        }
+        return acquired;
     }
 
     // ===== 설정 / 접속 =====
@@ -149,7 +181,8 @@ public class PetClientApp {
                         "code", roomCode,
                         "name", settings.getName(),
                         "color", settings.getColor(),
-                        "item", inventory.equippedCodes())))
+                        "item", inventory.equippedCodes(),
+                        "clientId", settings.getClientId())))
                 .exceptionally(e -> {
                     SwingUtilities.invokeLater(() -> fail("서버 접속 실패: " + e.getMessage()));
                     return null;
@@ -171,10 +204,87 @@ public class PetClientApp {
     private void changeRoomSettings() {
         settings.setAutoJoin(false);
         settings.save();
+        // 새로 뜨는 쪽이 "이미 실행 중"에 안 걸리게 먼저 놓아줌
+        SingleInstance.release();
         if (!Updater.relaunch()) {
             JOptionPane.showMessageDialog(null, "다시 실행하면 설정 창이 떠");
         }
         quit();
+    }
+
+    // ===== 트레이 =====
+
+    private void installTray() {
+        if (trayIcon != null || !SystemTray.isSupported()) {
+            return;
+        }
+
+        PopupMenu menu = new PopupMenu();
+        menu.add(trayItem("개미 불러오기", this::recallMyAnt));
+        menu.add(trayItem("채팅", this::openChatInput));
+        menu.add(trayItem("최근 채팅", this::showChatLog));
+        menu.addSeparator();
+        menu.add(trayItem("초대 코드 복사", this::copyCode));
+        menu.add(trayItem("방 설정 바꾸기", this::changeRoomSettings));
+        menu.addSeparator();
+        menu.add(trayItem("종료", this::quit));
+
+        trayIcon = new TrayIcon(trayImage(Color.decode(settings.getColor())), trayTooltip(), menu);
+        trayIcon.setImageAutoSize(true);
+        trayIcon.addActionListener(e -> recallMyAnt()); // 더블클릭
+
+        try {
+            SystemTray.getSystemTray().add(trayIcon);
+        } catch (AWTException e) {
+            trayIcon = null;
+        }
+    }
+
+    private MenuItem trayItem(String label, Runnable action) {
+        MenuItem item = new MenuItem(label);
+        item.addActionListener(e -> action.run());
+        return item;
+    }
+
+    private String trayTooltip() {
+        return "데스크톱 펫 · 방 " + roomCode;
+    }
+
+    private void removeTray() {
+        if (trayIcon != null) {
+            SystemTray.getSystemTray().remove(trayIcon);
+            trayIcon = null;
+        }
+    }
+
+    /** 트레이 아이콘용 개미 (코드로 그림) */
+    private static Image trayImage(Color color) {
+        BufferedImage img = new BufferedImage(32, 32, BufferedImage.TYPE_INT_ARGB);
+        Graphics2D g = img.createGraphics();
+        g.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
+
+        g.setColor(color);
+        g.setStroke(new BasicStroke(2f));
+        g.drawLine(8, 24, 5, 30);
+        g.drawLine(13, 25, 13, 31);
+        g.drawLine(18, 24, 21, 30);
+        g.fillOval(3, 14, 18, 14);
+        g.fillOval(16, 8, 14, 13);
+        g.drawLine(20, 9, 17, 2);
+        g.drawLine(26, 9, 29, 2);
+
+        g.setColor(Color.WHITE);
+        g.fillOval(23, 12, 4, 4);
+
+        g.dispose();
+        return img;
+    }
+
+    private void recallMyAnt() {
+        PetWindow mine = pets.get(selfId);
+        if (mine != null) {
+            mine.recall();
+        }
     }
 
     // ===== 메시지 처리 =====
@@ -194,6 +304,7 @@ public class PetClientApp {
                     spawn(member);
                 }
                 startIdleWatcher();
+                installTray();
 
                 if (createdRoom) {
                     copyCode();
@@ -341,6 +452,9 @@ public class PetClientApp {
         PetWindow mine = pets.get(selfId);
         if (mine != null) {
             mine.setColor(picked);
+        }
+        if (trayIcon != null) {
+            trayIcon.setImage(trayImage(picked));
         }
         net.send(Map.of("type", "COLOR", "color", hex));
     }
@@ -558,6 +672,7 @@ public class PetClientApp {
     }
 
     private void quit() {
+        removeTray();
         if (net != null) {
             net.close();
         }

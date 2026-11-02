@@ -8,8 +8,11 @@ import com.whiteant.pet.server.room.Room;
 import com.whiteant.pet.server.room.RoomRegistry;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
 import org.springframework.web.socket.CloseStatus;
+import org.springframework.web.socket.PingMessage;
+import org.springframework.web.socket.PongMessage;
 import org.springframework.web.socket.TextMessage;
 import org.springframework.web.socket.WebSocketSession;
 import org.springframework.web.socket.handler.ConcurrentWebSocketSessionDecorator;
@@ -30,8 +33,12 @@ public class PetSocketHandler extends TextWebSocketHandler {
     private static final int MAX_MEMBERS = 10;
     private static final int MAX_NAME_LENGTH = 10;
     private static final int MAX_CHAT_LENGTH = 50;
+    private static final int MAX_CLIENT_ID_LENGTH = 64;
     private static final long CHAT_COOLDOWN_MS = 500;
     private static final long SNACK_COOLDOWN_MS = 3000;
+    // 이 시간 동안 아무 응답(메시지/pong) 없으면 끊긴 걸로 봄
+    private static final long DEAD_AFTER_MS = 60_000;
+    private static final CloseStatus REPLACED = new CloseStatus(4000, "replaced");
     private static final Pattern COLOR = Pattern.compile("^#[0-9a-fA-F]{6}$");
     private static final Set<String> EMOTES = Set.of("HEART", "LOL", "HI", "SLEEPY", "HUNGRY");
 
@@ -41,15 +48,19 @@ public class PetSocketHandler extends TextWebSocketHandler {
     private final Map<String, WebSocketSession> sessions = new ConcurrentHashMap<>();
     private final Map<String, Room> joinedRooms = new ConcurrentHashMap<>();
     private final Map<String, Long> cooldowns = new ConcurrentHashMap<>();
+    private final Map<String, Long> lastSeen = new ConcurrentHashMap<>();
 
     @Override
     public void afterConnectionEstablished(WebSocketSession session) {
         // sendMessage는 스레드 안전하지 않아서 데코레이터로 감쌈
         sessions.put(session.getId(), new ConcurrentWebSocketSessionDecorator(session, 5000, 64 * 1024));
+        lastSeen.put(session.getId(), System.currentTimeMillis());
     }
 
     @Override
     protected void handleTextMessage(WebSocketSession raw, TextMessage message) throws IOException {
+        lastSeen.put(raw.getId(), System.currentTimeMillis());
+
         WebSocketSession session = sessions.get(raw.getId());
         if (session == null) {
             return;
@@ -70,6 +81,39 @@ public class PetSocketHandler extends TextWebSocketHandler {
         }
     }
 
+    @Override
+    protected void handlePongMessage(WebSocketSession session, PongMessage message) {
+        lastSeen.put(session.getId(), System.currentTimeMillis());
+    }
+
+    // ===== 하트비트 =====
+
+    /** 15초마다 ping. 60초 넘게 응답 없으면 끊긴 걸로 보고 정리 */
+    @Scheduled(fixedDelay = 15_000)
+    public void heartbeat() {
+        long now = System.currentTimeMillis();
+
+        for (WebSocketSession session : sessions.values()) {
+            Long seen = lastSeen.get(session.getId());
+            if (seen != null && now - seen > DEAD_AFTER_MS) {
+                log.info("응답 없는 연결 정리 session={}", session.getId());
+                leave(session.getId(), true);
+                closeQuietly(session, CloseStatus.SESSION_NOT_RELIABLE);
+                continue;
+            }
+
+            try {
+                if (session.isOpen()) {
+                    session.sendMessage(new PingMessage());
+                }
+            } catch (Exception e) {
+                log.debug("ping 실패 session={}", session.getId(), e);
+            }
+        }
+    }
+
+    // ===== 입장 =====
+
     private void join(WebSocketSession session, JsonNode msg) {
         if (joinedRooms.containsKey(session.getId())) {
             return;
@@ -88,12 +132,25 @@ public class PetSocketHandler extends TextWebSocketHandler {
             sendError(session, "INVALID_PROFILE");
             return;
         }
+
+        String clientId = msg.path("clientId").asText("").trim();
+        if (clientId.length() > MAX_CLIENT_ID_LENGTH) {
+            clientId = clientId.substring(0, MAX_CLIENT_ID_LENGTH);
+        }
+
+        // 재접속이면 남아 있던 이전 개미 내보내고 교체 (구버전 클라이언트는 닉네임으로 판별)
+        Member previous = clientId.isEmpty() ? room.findByName(name) : room.findByClientId(clientId);
+        if (previous != null) {
+            replace(room, previous);
+        }
+
         if (room.size() >= MAX_MEMBERS) {
             sendError(session, "ROOM_FULL");
             return;
         }
 
-        Member member = new Member(session.getId(), name, color, validItem(msg.path("item").asText("")), false);
+        Member member = new Member(session.getId(), name, clientId, color,
+                validItem(msg.path("item").asText("")), false);
         room.add(session, member);
         joinedRooms.put(session.getId(), room);
         log.info("[{}] {} 입장 ({}명)", room.getCode(), name, room.size());
@@ -106,6 +163,18 @@ public class PetSocketHandler extends TextWebSocketHandler {
 
         broadcast(room, Map.of("type", "MEMBER_JOINED", "member", member), member.getId());
     }
+
+    private void replace(Room room, Member previous) {
+        log.info("[{}] {} 재접속, 이전 연결 교체", room.getCode(), previous.getName());
+        WebSocketSession oldSession = room.session(previous.getId());
+        // 방이 잠깐 비어도 지우면 안 됨 (바로 새 접속이 들어옴)
+        leave(previous.getId(), false);
+        if (oldSession != null) {
+            closeQuietly(oldSession, REPLACED);
+        }
+    }
+
+    // ===== 기본 기능 =====
 
     private void emote(WebSocketSession session, JsonNode msg) {
         Room room = joinedRooms.get(session.getId());
@@ -233,21 +302,33 @@ public class PetSocketHandler extends TextWebSocketHandler {
                 "item", item.name()), null);
     }
 
+    // ===== 퇴장 =====
+
     @Override
     public void afterConnectionClosed(WebSocketSession session, CloseStatus status) {
-        String id = session.getId();
-        sessions.remove(id);
-        cooldowns.keySet().removeIf(key -> key.startsWith(id + ":"));
+        leave(session.getId(), true);
+    }
 
-        Room room = joinedRooms.remove(id);
+    /** 정상 종료 / 끊김 감지 / 재접속 교체 모두 여기로. 여러 번 불려도 안전 */
+    private void leave(String sessionId, boolean removeEmptyRoom) {
+        sessions.remove(sessionId);
+        lastSeen.remove(sessionId);
+        cooldowns.keySet().removeIf(key -> key.startsWith(sessionId + ":"));
+
+        Room room = joinedRooms.remove(sessionId);
         if (room == null) {
             return;
         }
-        room.remove(id);
+        room.remove(sessionId);
         log.info("[{}] 퇴장 ({}명 남음)", room.getCode(), room.size());
-        broadcast(room, Map.of("type", "MEMBER_LEFT", "memberId", id), null);
-        roomRegistry.removeIfEmpty(room);
+        broadcast(room, Map.of("type", "MEMBER_LEFT", "memberId", sessionId), null);
+
+        if (removeEmptyRoom) {
+            roomRegistry.removeIfEmpty(room);
+        }
     }
+
+    // ===== 공통 =====
 
     public void broadcastToRoom(Room room, Object payload) {
         broadcast(room, payload, null);
@@ -289,9 +370,16 @@ public class PetSocketHandler extends TextWebSocketHandler {
             if (session.isOpen()) {
                 session.sendMessage(new TextMessage(mapper.writeValueAsString(payload)));
             }
-        } catch (IOException e) {
-            // 끊긴 세션은 afterConnectionClosed에서 정리됨
+        } catch (Exception e) {
+            // 끊긴 세션은 하트비트나 afterConnectionClosed에서 정리됨
             log.debug("send 실패 session={}", session.getId(), e);
+        }
+    }
+
+    private void closeQuietly(WebSocketSession session, CloseStatus status) {
+        try {
+            session.close(status);
+        } catch (Exception ignored) {
         }
     }
 }

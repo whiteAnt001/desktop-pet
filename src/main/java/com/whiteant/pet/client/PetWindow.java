@@ -214,6 +214,21 @@ public class PetWindow extends JWindow {
         timer.start();
     }
 
+    /** 화면 밖으로 사라졌거나 창 뒤에 숨은 개미를 화면 가운데 위에서 다시 떨어뜨리기 */
+    public void recall() {
+        x = area.x + (area.width - W) / 2.0;
+        y = area.y;
+        vy = 0;
+        dragging = false;
+        dragOffset = null;
+        targetX = null;
+        setLocation((int) x, (int) y);
+        setVisible(true);
+        toFront();
+        showBubble("나 여기 있어!");
+        notifyMove(true);
+    }
+
     public void showBubble(String text) {
         bubbleText = text;
         int ms = Math.min(BUBBLE_MAX_MS, BUBBLE_MIN_MS + text.length() * BUBBLE_MS_PER_CHAR);

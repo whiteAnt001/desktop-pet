@@ -39,6 +39,24 @@ public class Room {
         return members.get(memberId);
     }
 
+    public WebSocketSession session(String memberId) {
+        return sessions.get(memberId);
+    }
+
+    public Member findByClientId(String clientId) {
+        return members.values().stream()
+                .filter(m -> clientId.equals(m.getClientId()))
+                .findFirst()
+                .orElse(null);
+    }
+
+    public Member findByName(String name) {
+        return members.values().stream()
+                .filter(m -> name.equals(m.getName()))
+                .findFirst()
+                .orElse(null);
+    }
+
     public List<Member> members() {
         return new ArrayList<>(members.values());
     }

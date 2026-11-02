@@ -37,7 +37,15 @@ public enum Item {
     EYEPATCH("안대", Rarity.RARE, Slot.FACE),
 
     // 목
+    BOWTIE("나비넥타이", Rarity.COMMON, Slot.NECK),
+    TIE("넥타이", Rarity.COMMON, Slot.NECK),
+    BELL_COLLAR("방울 목걸이", Rarity.COMMON, Slot.NECK),
     SCARF("목도리", Rarity.RARE, Slot.NECK),
+    PEARL_NECKLACE("진주 목걸이", Rarity.RARE, Slot.NECK),
+    HEART_PENDANT("하트 펜던트", Rarity.RARE, Slot.NECK),
+    GOLD_CHAIN("금목걸이", Rarity.EPIC, Slot.NECK),
+    MEDAL("금메달", Rarity.EPIC, Slot.NECK),
+    DIAMOND_NECKLACE("다이아 목걸이", Rarity.LEGENDARY, Slot.NECK),
 
     // 등
     BACKPACK("책가방", Rarity.COMMON, Slot.BACK),
@@ -236,6 +244,102 @@ public enum Item {
                     g.fillRect(hx + 4 + i * 7, y, 2, 6);
                 }
             }
+            case BOWTIE -> {
+                int by = hy + 21;
+                g.setColor(new Color(0xcf222e));
+                g.fillPolygon(new int[]{cx, cx - 7, cx - 7}, new int[]{by, by - 4, by + 4}, 3);
+                g.fillPolygon(new int[]{cx, cx + 7, cx + 7}, new int[]{by, by - 4, by + 4}, 3);
+                g.setColor(new Color(0x8c1620));
+                g.fillOval(cx - 2, by - 2, 4, 4);
+            }
+            case TIE -> {
+                int ty = hy + 20;
+                g.setColor(new Color(0x1f3a7a));
+                g.fillPolygon(new int[]{cx - 2, cx + 2, cx + 3, cx - 3}, new int[]{ty, ty, ty + 4, ty + 4}, 4);
+                g.fillPolygon(new int[]{cx - 3, cx + 3, cx + 4, cx, cx - 4},
+                        new int[]{ty + 4, ty + 4, ty + 15, ty + 19, ty + 15}, 5);
+                g.setColor(new Color(0xf2c94c));
+                g.setStroke(new BasicStroke(1f));
+                g.drawLine(cx - 3, ty + 9, cx + 3, ty + 7);
+                g.drawLine(cx - 3, ty + 13, cx + 3, ty + 11);
+            }
+            case BELL_COLLAR -> {
+                g.setColor(new Color(0xcf222e));
+                g.setStroke(new BasicStroke(3f));
+                necklaceArc(g, hx, hy);
+                g.setColor(new Color(0xf2c94c));
+                g.fillOval(cx - 4, hy + 21, 8, 8);
+                g.setColor(new Color(0x8a6d1c));
+                g.setStroke(new BasicStroke(1f));
+                g.drawLine(cx, hy + 25, cx, hy + 28);
+            }
+            case PEARL_NECKLACE -> {
+                g.setColor(new Color(0xf6f8fa));
+                for (int deg = 205; deg <= 335; deg += 16) {
+                    double[] pt = necklacePoint(hx, hy, deg);
+                    g.fillOval((int) pt[0] - 2, (int) pt[1] - 2, 4, 4);
+                }
+                g.setColor(new Color(0xd0d7de));
+                g.setStroke(new BasicStroke(0.8f));
+                for (int deg = 205; deg <= 335; deg += 16) {
+                    double[] pt = necklacePoint(hx, hy, deg);
+                    g.drawOval((int) pt[0] - 2, (int) pt[1] - 2, 4, 4);
+                }
+            }
+            case HEART_PENDANT -> {
+                g.setColor(new Color(0xc9d1d9));
+                g.setStroke(new BasicStroke(1f));
+                necklaceArc(g, hx, hy);
+                g.setColor(new Color(0xff6b9d));
+                heart(g, cx, hy + 25, 7);
+            }
+            case GOLD_CHAIN -> {
+                g.setColor(new Color(0xd4a72c));
+                g.setStroke(new BasicStroke(2.5f));
+                necklaceArc(g, hx, hy);
+                g.setColor(new Color(0xf2c94c));
+                for (int deg = 205; deg <= 335; deg += 13) {
+                    double[] pt = necklacePoint(hx, hy, deg);
+                    g.fillOval((int) pt[0] - 2, (int) pt[1] - 1, 4, 3);
+                }
+                // 가끔 반짝
+                float shine = (float) Math.max(0, Math.sin(f * 0.15));
+                if (shine > 0.7f) {
+                    double[] pt = necklacePoint(hx, hy, 250 + (f % 40));
+                    g.setColor(Color.WHITE);
+                    g.setComposite(alpha((shine - 0.7f) / 0.3f));
+                    star(g, pt[0], pt[1], 3);
+                }
+            }
+            case MEDAL -> {
+                g.setStroke(new BasicStroke(3f));
+                g.setColor(new Color(0xcf222e));
+                g.drawLine(hx + 3, hy + 15, cx, hy + 28);
+                g.setColor(new Color(0x2f81f7));
+                g.drawLine(hx + 21, hy + 15, cx, hy + 28);
+                g.setColor(new Color(0xf2c94c));
+                g.fillOval(cx - 5, hy + 27, 10, 10);
+                g.setColor(new Color(0xd4a72c));
+                g.setStroke(new BasicStroke(1f));
+                g.drawOval(cx - 5, hy + 27, 10, 10);
+                g.setColor(new Color(0xfff3b0));
+                star(g, cx, hy + 32, 3);
+            }
+            case DIAMOND_NECKLACE -> {
+                g.setColor(new Color(0xc9d1d9));
+                g.setStroke(new BasicStroke(1.2f));
+                necklaceArc(g, hx, hy);
+                int dy = hy + 24;
+                g.setColor(new Color(0x7ee0ff));
+                g.fillPolygon(new int[]{cx - 4, cx, cx + 4, cx}, new int[]{dy, dy - 3, dy, dy + 6}, 4);
+                g.setColor(new Color(0xd8f6ff));
+                g.fillPolygon(new int[]{cx - 2, cx, cx + 1}, new int[]{dy, dy - 2, dy}, 3);
+                // 반짝반짝
+                float twinkle = (float) (0.5 + 0.5 * Math.sin(f * 0.2));
+                g.setColor(Color.WHITE);
+                g.setComposite(alpha(twinkle));
+                star(g, cx + 4, dy - 4, 2 + twinkle * 2.5);
+            }
 
             // ===== 머리 =====
             case RIBBON -> {
@@ -386,6 +490,19 @@ public enum Item {
 
     private static AlphaComposite alpha(float a) {
         return AlphaComposite.getInstance(AlphaComposite.SRC_OVER, Math.max(0f, Math.min(1f, a)));
+    }
+
+    /** 목걸이 줄: 머리 아래쪽으로 처진 반원 */
+    private static void necklaceArc(Graphics2D g, int hx, int hy) {
+        g.drawArc(hx + 1, hy + 10, 22, 14, 200, 140);
+    }
+
+    /** necklaceArc 위의 한 점. deg는 drawArc 각도 (270이 맨 아래) */
+    private static double[] necklacePoint(int hx, int hy, double deg) {
+        double rad = Math.toRadians(deg);
+        double centerX = hx + 12;
+        double centerY = hy + 17;
+        return new double[]{centerX + 11 * Math.cos(rad), centerY - 7 * Math.sin(rad)};
     }
 
     /** 개미 중심에서 퍼지는 은은한 빛 */

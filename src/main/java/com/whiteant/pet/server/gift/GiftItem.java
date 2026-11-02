@@ -22,6 +22,9 @@ public enum GiftItem {
     MUSTACHE(Rarity.COMMON),
     MASK(Rarity.COMMON),
     BACKPACK(Rarity.COMMON),
+    BOWTIE(Rarity.COMMON),
+    TIE(Rarity.COMMON),
+    BELL_COLLAR(Rarity.COMMON),
 
     // 레어
     BEANIE(Rarity.RARE),
@@ -33,6 +36,8 @@ public enum GiftItem {
     EYEPATCH(Rarity.RARE),
     SCARF(Rarity.RARE),
     CAPE_RED(Rarity.RARE),
+    PEARL_NECKLACE(Rarity.RARE),
+    HEART_PENDANT(Rarity.RARE),
 
     // 영웅
     WIZARD_HAT(Rarity.EPIC),
@@ -41,6 +46,8 @@ public enum GiftItem {
     AURA_SPARKLE(Rarity.EPIC),
     AURA_HEART(Rarity.EPIC),
     AURA_SHADOW(Rarity.EPIC),
+    GOLD_CHAIN(Rarity.EPIC),
+    MEDAL(Rarity.EPIC),
 
     // 전설
     CROWN(Rarity.LEGENDARY),
@@ -49,7 +56,8 @@ public enum GiftItem {
     ANGEL_WINGS(Rarity.LEGENDARY),
     AURA_FIRE(Rarity.LEGENDARY),
     AURA_ELECTRIC(Rarity.LEGENDARY),
-    AURA_RAINBOW(Rarity.LEGENDARY);
+    AURA_RAINBOW(Rarity.LEGENDARY),
+    DIAMOND_NECKLACE(Rarity.LEGENDARY);
 
     /** 부위 수 (오라/등/목/머리/얼굴) */
     private static final int MAX_EQUIPPED = 5;
